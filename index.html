@@ -1,28 +1,290 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <title>送给你的网页 💝</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      background-color: #ffeef2;
-      text-align: center;
-      margin-top: 100px;
-    }
-    h1 {
-      color: #ff3e74;
-      font-size: 48px;
-    }
-    p {
-      font-size: 22px;
-      color: #444;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>少投喂 · 星星收集器</title>
+<style>
+  :root{
+    --bg1:#0b1020; --bg2:#141a33;
+    --glass:rgba(255,255,255,.08);
+    --txt:#e5e7eb; --muted:#a5adcb; --accent:#ffd166;
+    --r:18px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:
+      radial-gradient(1000px 900px at 80% -10%, #60a5fa22, transparent 60%),
+      radial-gradient(900px 700px at -10% 60%, #22d3ee1e, transparent 60%),
+      linear-gradient(160deg,var(--bg1),var(--bg2) 60%, #0a0f1e);
+    color:var(--txt);
+    font-family: ui-sans-serif,system-ui,-apple-system,"SF Pro","PingFang SC","Microsoft YaHei",Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden;
+  }
+  canvas{position:fixed; inset:0; display:block;}
+
+  .hud{
+    position:fixed; left:50%; top:16px; transform:translateX(-50%);
+    display:flex; gap:10px; align-items:center; padding:10px 14px;
+    background:linear-gradient(180deg,var(--glass),rgba(255,255,255,.04));
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:14px; backdrop-filter: blur(10px) saturate(120%);
+    user-select:none; pointer-events:none; box-shadow:0 6px 24px rgba(0,0,0,.3)
+  }
+  .tag{font-size:13px;color:var(--muted)}
+  .num{font-weight:800; letter-spacing:.02em; font-variant-numeric:tabular-nums}
+  .btn{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    border:0; border-radius:12px; padding:14px 18px; font-weight:700;
+    color:#0b1020; background:linear-gradient(135deg,#22d3ee,#a78bfa);
+    box-shadow:0 10px 28px #7c3aed55; cursor:pointer; user-select:none;
+  }
+  .btn:active{transform:translateX(-50%) translateY(1px)}
+  .title{
+    position:fixed; top:22px; left:22px; padding:8px 12px; border-radius:999px;
+    background:rgba(255,255,255,.06); color:#dbeafe; font-size:13px;
+    backdrop-filter: blur(8px); border:1px solid rgba(255,255,255,.12)
+  }
+  .toast{
+    position:fixed; top:22px; right:22px; background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.12); backdrop-filter:blur(10px);
+    padding:8px 12px; border-radius:999px; font-size:13px; color:#e9d5ff;
+    opacity:0; transform:translateY(-8px); transition:.25s; pointer-events:none;
+  }
+  .toast.show{opacity:1; transform:none}
+  .badge{
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    color:#fef9c3; font-size:13px; opacity:.9
+  }
+</style>
 </head>
 <body>
-  <h1>嘿嘿，我做了个小网页给你！</h1>
-  <p>每一行代码都是给你写的❤️</p>
-  <p>希望看到的人是你～</p>
+<canvas id="game"></canvas>
+
+<div class="title">少投喂 · 星星收集器 ✨</div>
+
+<div class="hud" id="hud">
+  <span class="tag">分数</span><span class="num" id="score">0</span>
+  <span class="tag" style="margin-left:8px">连击</span><span class="num" id="combo">x1</span>
+  <span class="tag" style="margin-left:8px">时间</span><span class="num" id="time">60</span>
+</div>
+
+<button class="btn" id="start">开始游戏 🎮</button>
+<div class="badge" id="hint">提示：点/戳星星得分，连续命中会加连击！</div>
+<div class="toast" id="toast">彩虹星出现啦！+5分，时间减缓～</div>
+
+<script>
+/* ========= 基础设置 ========= */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', { alpha:true });
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+function fit(){
+  canvas.width  = Math.floor(innerWidth * DPR);
+  canvas.height = Math.floor(innerHeight * DPR);
+  canvas.style.width  = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+}
+fit(); addEventListener('resize', fit);
+
+/* ========= 游戏状态 ========= */
+let running = false, over = false;
+let score = 0, combo = 1, time = 60, slowTimer = 0;
+let spawnAcc = 0;
+const stars = [];
+const bursts = [];
+const rand = (a,b)=>a+Math.random()*(b-a);
+const hsv = (h,s=70,v=100)=>`hsl(${h}deg ${s}% ${v}%)`;
+const SCORE_EACH = 1;
+
+function spawnStar(){
+  const rainbow = Math.random()<0.12; // 12% 概率彩虹星
+  const size = rainbow ? rand(10,15) : rand(7,12);
+  const x = rand(30, innerWidth-30);
+  const y = -20;
+  const vy = rainbow ? rand(55,75) : rand(90,130);
+  stars.push({
+    x,y, r:size, vy, vx: rand(-25,25),
+    rainbow,
+    hue: rand(0,360)
+  });
+  if(rainbow) showToast();
+}
+
+function pop(x,y,color){
+  const n = 16;
+  for(let i=0;i<n;i++){
+    bursts.push({
+      x,y, r:rand(1,2)*DPR, life:rand(.6,1.1), t:0,
+      vx: Math.cos(i/n*Math.PI*2)*rand(60,140),
+      vy: Math.sin(i/n*Math.PI*2)*rand(60,140),
+      color
+    });
+  }
+}
+
+function update(dt){
+  // 时间
+  if(running && !over){
+    const speedFactor = slowTimer>0 ? 0.5 : 1;
+    time -= dt * speedFactor;
+    if(time<=0){ time=0; gameOver(); }
+  }
+  if(slowTimer>0) slowTimer -= dt;
+
+  // 生成
+  if(running){
+    spawnAcc += dt;
+    const interval = slowTimer>0 ? 0.7 : 0.45; // 放慢节奏
+    while(spawnAcc>interval){ spawnAcc-=interval; spawnStar(); }
+  }
+
+  // 星星移动
+  for(let i=stars.length-1;i>=0;i--){
+    const s = stars[i];
+    s.y += s.vy * dt;
+    s.x += s.vx * dt;
+    if(s.y - s.r > innerHeight + 30){ // 掉漏，断连击
+      stars.splice(i,1);
+      combo = 1;
+      updateHUD();
+    }
+  }
+
+  // 爆裂粒子
+  for(let i=bursts.length-1;i>=0;i--){
+    const b = bursts[i];
+    b.t += dt;
+    b.vx *= .985; b.vy = b.vy*.985 + 80*dt;
+    b.x += b.vx*dt; b.y += b.vy*dt;
+    if(b.t>b.life) bursts.splice(i,1);
+  }
+}
+
+function draw(){
+  // 清屏（透明）
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.save(); ctx.scale(DPR,DPR);
+
+  // 星星
+  for(const s of stars){
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    const grd = ctx.createRadialGradient(0,0,0,0,0,s.r*2);
+    const color = s.rainbow ? hsv((performance.now()/40 + s.hue)%360, 90, 70) : '#ffd166';
+    grd.addColorStop(0,'#fff');
+    grd.addColorStop(.2,color);
+    grd.addColorStop(1,'#0000');
+    ctx.fillStyle = grd;
+    // 画五角星
+    ctx.beginPath();
+    const R = s.r, r = s.r*0.45;
+    for(let i=0;i<5;i++){
+      const a = -Math.PI/2 + i*2*Math.PI/5;
+      ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R);
+      ctx.lineTo(Math.cos(a+Math.PI/5)*r, Math.sin(a+Math.PI/5)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // 粒子
+  for(const p of bursts){
+    const alpha = 1 - p.t/p.life;
+    ctx.globalAlpha = Math.max(0,alpha);
+    const g = ctx.createRadialGradient(p.x/DPR,p.y/DPR,0,p.x/DPR,p.y/DPR,p.r*3);
+    g.addColorStop(0,'#fff');
+    g.addColorStop(.2,p.color||'#60a5fa');
+    g.addColorStop(1,'#0000');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x/DPR,p.y/DPR,p.r*3,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  }
+
+  ctx.restore();
+}
+
+let last=0;
+function tick(ts){
+  const dt = Math.min(1/30, (ts-last)/1000 || 0); last=ts;
+  if(running) update(dt);
+  draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ========= 交互 ========= */
+const scoreEl = document.getElementById('score');
+const comboEl = document.getElementById('combo');
+const timeEl  = document.getElementById('time');
+const btn = document.getElementById('start');
+const hint = document.getElementById('hint');
+const toast = document.getElementById('toast');
+
+function updateHUD(){
+  scoreEl.textContent = score;
+  comboEl.textContent = 'x'+combo;
+  timeEl.textContent = Math.ceil(time);
+}
+
+function startGame(){
+  score=0; combo=1; time=60; over=false; running=true;
+  stars.length=0; bursts.length=0; slowTimer=0; spawnAcc=0;
+  btn.textContent='暂停 ⏸'; hint.textContent='哎哟诡秘不会这个都点不到吧！诡秘你好笨';
+  updateHUD();
+}
+function pauseGame(){
+  running = !running;
+  btn.textContent = running ? '暂停 ⏸' : '继续 ▶︎';
+}
+function gameOver(){
+  over = true; running=false;
+  btn.textContent='再来一局 🔁';
+  hint.textContent = `本局得分：${score}，最高连击：${comboEl.textContent} ！`;
+  // 小结束礼花
+  pop(innerWidth/2*DPR, innerHeight*0.3*DPR, '#a78bfa');
+  pop(innerWidth/2*DPR, innerHeight*0.6*DPR, '#22d3ee');
+}
+
+btn.addEventListener('click', ()=>{
+  if(!over && score===0 && time===60 && stars.length===0) startGame();
+  else if(over) startGame();
+  else pauseGame();
+});
+
+function hit(x,y){
+  if(!running) return;
+  for(let i=stars.length-1;i>=0;i--){
+    const s = stars[i];
+    const dx = x - s.x, dy = y - s.y;
+    const d2 = dx*dx + dy*dy;
+    if(d2 < (s.r*1.4)*(s.r*1.4)){ // 命中
+      stars.splice(i,1);
+      const gain = s.rainbow ? 5 : SCORE_EACH*combo;
+      score += Math.round(gain);
+      combo = Math.min(combo+1, 9);
+      updateHUD();
+      pop(x*DPR,y*DPR, s.rainbow? '#f472b6' : '#ffd166');
+      if(s.rainbow){
+        slowTimer = 3.5; // 放慢 3.5s
+        time += 1; // 奖励 1 秒
+      }
+      break;
+    }
+  }
+}
+addEventListener('pointerdown', e=>hit(e.clientX, e.clientY));
+
+/* ========= 小提示 ========= */
+let toastTimer=0;
+function showToast(){
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toast.classList.remove('show'), 1500);
+}
+
+// 初始 HUD 值
+updateHUD();
+</script>
 </body>
 </html>
